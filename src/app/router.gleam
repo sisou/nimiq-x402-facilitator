@@ -3,6 +3,7 @@ import gleam/dynamic/decode
 import gleam/http.{Post}
 import gleam/json
 import gleam/result
+import status_code
 import wisp.{type Request, type Response}
 
 // This type is going to be parsed and decoded from the request body.
@@ -48,7 +49,7 @@ pub fn handle_request(req: Request) -> Response {
   // An appropriate response is returned depending on whether the JSON could be
   // successfully handled or not.
   case result {
-    Ok(json) -> wisp.json_response(json, 201)
+    Ok(json) -> wisp.json_response(json, status_code.created)
 
     // In a real application we would probably want to return some JSON error
     // object, but for this example we'll just return an empty response.
