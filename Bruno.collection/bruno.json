@@ -1,0 +1,15 @@
+{
+  "version": "1",
+  "name": "x402 Facilitator",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ],
+  "size": 0.0002117156982421875,
+  "filesCount": 2,
+  "presets": {
+    "requestType": "http",
+    "requestUrl": "{{FACILITATOR_URL}}/"
+  }
+}

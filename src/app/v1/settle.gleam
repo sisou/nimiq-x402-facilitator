@@ -5,6 +5,7 @@ import app/web
 import gleam/dynamic/decode
 import gleam/http.{Post}
 import gleam/json
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import status_code
@@ -41,11 +42,20 @@ pub fn handle(req: Request) -> Response {
   // An appropriate response is returned depending on whether the JSON could be
   // successfully handled or not.
   case result {
-    Ok(json) -> wisp.json_response(json, status_code.created)
-
-    // In a real application we would probably want to return some JSON error
-    // object, but for this example we'll just return an empty response.
-    Error(_) -> wisp.unprocessable_content()
+    Ok(json) -> wisp.json_response(json, status_code.ok)
+    Error(errors) -> {
+      errors
+      |> list.map(fn(error) {
+        json.object([
+          #("expected", json.string(error.expected)),
+          #("found", json.string(error.found)),
+          #("path", json.array(error.path, json.string)),
+        ])
+      })
+      |> json.preprocessed_array()
+      |> json.to_string()
+      |> wisp.json_response(status_code.bad_request)
+    }
   }
 }
 
