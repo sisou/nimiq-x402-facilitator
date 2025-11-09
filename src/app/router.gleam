@@ -1,7 +1,11 @@
+import app/types/payment_kind
+import app/types/payment_network
+import app/types/payment_scheme
 import app/web
 import gleam/dynamic/decode
 import gleam/http.{Get, Post}
 import gleam/json
+import gleam/list
 import gleam/result
 import status_code
 import wisp.{type Request, type Response}
@@ -16,6 +20,8 @@ pub fn handle_request(req: Request) -> Response {
   case wisp.path_segments(req) {
     // This matches `/`.
     [] -> home_page(req)
+
+    ["v1", "supported"] -> supported(req)
 
     // This matches `/person`.
     ["person"] -> create_person(req)
@@ -32,6 +38,23 @@ fn home_page(req: Request) -> Response {
 
   wisp.ok()
   |> wisp.html_body("Nimiq x402 Facilitator")
+}
+
+fn supported(_req: Request) -> Response {
+  let kinds = [
+    payment_kind.PaymentKind(
+      x402_version: 1,
+      scheme: payment_scheme.Exact,
+      // TODO: Make network configurable
+      network: payment_network.NimiqTestnet,
+    ),
+  ]
+
+  kinds
+  |> list.map(payment_kind.to_json)
+  |> json.preprocessed_array()
+  |> json.to_string()
+  |> wisp.json_response(status_code.ok)
 }
 
 // This type is going to be parsed and decoded from the request body.
