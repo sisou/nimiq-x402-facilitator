@@ -1,10 +1,38 @@
 import app/web
 import gleam/dynamic/decode
-import gleam/http.{Post}
+import gleam/http.{Get, Post}
 import gleam/json
 import gleam/result
 import status_code
 import wisp.{type Request, type Response}
+
+pub fn handle_request(req: Request) -> Response {
+  use req <- web.middleware(req)
+
+  // Wisp doesn't have a special router abstraction, instead we recommend using
+  // regular old pattern matching. This is faster than a router, is type safe,
+  // and means you don't have to learn or be limited by a special DSL.
+  //
+  case wisp.path_segments(req) {
+    // This matches `/`.
+    [] -> home_page(req)
+
+    // This matches `/person`.
+    ["person"] -> create_person(req)
+
+    // This matches all other paths.
+    _ -> wisp.not_found()
+  }
+}
+
+fn home_page(req: Request) -> Response {
+  // The home page can only be accessed via GET requests, so this middleware is
+  // used to return a 405: Method Not Allowed response for all other methods.
+  use <- wisp.require_method(req, Get)
+
+  wisp.ok()
+  |> wisp.html_body("Nimiq x402 Facilitator")
+}
 
 // This type is going to be parsed and decoded from the request body.
 pub type Person {
@@ -22,7 +50,7 @@ fn person_decoder() -> decode.Decoder(Person) {
   decode.success(Person(name:, is_cool:))
 }
 
-pub fn handle_request(req: Request) -> Response {
+pub fn create_person(req: Request) -> Response {
   use req <- web.middleware(req)
   use <- wisp.require_method(req, Post)
 
