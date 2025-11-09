@@ -4,8 +4,10 @@ import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/int
 import gleam/option.{type Option, None}
+import gleam/result
+import nimiq/account/address.{type Address}
 
-pub opaque type PaymentRequirements {
+pub type PaymentRequirements {
   PaymentRequirements(
     scheme: PaymentScheme,
     network: PaymentNetwork,
@@ -13,7 +15,7 @@ pub opaque type PaymentRequirements {
     resource: String,
     description: String,
     mime_type: String,
-    pay_to: String,
+    pay_to: Address,
     max_timeout_seconds: Int,
     asset: String,
     output_schema: Option(dynamic.Dynamic),
@@ -31,7 +33,7 @@ pub fn decoder() -> decode.Decoder(PaymentRequirements) {
   use resource <- decode.field("resource", decode.string)
   use description <- decode.field("description", decode.string)
   use mime_type <- decode.field("mimeType", decode.string)
-  use pay_to <- decode.field("payTo", decode.string)
+  use pay_to <- decode.field("payTo", pay_to_decoder())
   use max_timeout_seconds <- decode.field("maxTimeoutSeconds", decode.int)
   use asset <- decode.field("asset", decode.string)
   use output_schema <- decode.optional_field(
@@ -62,7 +64,7 @@ pub fn decoder() -> decode.Decoder(PaymentRequirements) {
 
 pub fn max_amount_required_decoder() -> decode.Decoder(Int) {
   let default = 0
-  decode.new_primitive_decoder("StringInt", fn(data) {
+  decode.new_primitive_decoder("IntegerString", fn(data) {
     case decode.run(data, decode.string) {
       Ok(x) ->
         case int.parse(x) {
@@ -71,5 +73,15 @@ pub fn max_amount_required_decoder() -> decode.Decoder(Int) {
         }
       Error(_) -> Error(default)
     }
+  })
+}
+
+pub fn pay_to_decoder() -> decode.Decoder(Address) {
+  decode.new_primitive_decoder("AddressString", fn(data) {
+    decode.run(data, decode.string)
+    |> result.replace_error("")
+    |> result.map(address.from_string)
+    |> result.flatten()
+    |> result.replace_error(address.zero())
   })
 }

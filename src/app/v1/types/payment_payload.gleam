@@ -2,7 +2,7 @@ import app/v1/types/payment_network.{type PaymentNetwork}
 import app/v1/types/payment_scheme.{type PaymentScheme}
 import gleam/dynamic/decode
 
-pub opaque type PaymentPayload {
+pub type PaymentPayload {
   PaymentPayload(
     x402_version: Int,
     scheme: PaymentScheme,
@@ -19,7 +19,7 @@ pub fn decoder() -> decode.Decoder(PaymentPayload) {
   decode.success(PaymentPayload(x402_version:, scheme:, network:, payload:))
 }
 
-pub opaque type Payload {
+pub type Payload {
   Payload(transaction: String)
 }
 

@@ -84,7 +84,7 @@ fn settle_request_decoder() -> decode.Decoder(SettleRequest) {
   ))
 }
 
-type SettleErrorReason {
+type ErrorReason {
   InsufficientFunds
   InvalidScheme
   InvalidNetwork
@@ -93,9 +93,7 @@ type SettleErrorReason {
   InvalidPayload
 }
 
-fn settle_invalid_reason_to_json(
-  settle_invalid_reason: SettleErrorReason,
-) -> json.Json {
+fn error_reason_to_json(settle_invalid_reason: ErrorReason) -> json.Json {
   case settle_invalid_reason {
     InsufficientFunds -> json.string("insufficient_funds")
     InvalidScheme -> json.string("invalid_scheme")
@@ -112,7 +110,7 @@ type SettleResponse {
     payer: String,
     transaction: String,
     network: PaymentNetwork,
-    error_reason: Option(SettleErrorReason),
+    error_reason: Option(ErrorReason),
   )
 }
 
@@ -126,7 +124,7 @@ fn settle_response_to_json(settle_response: SettleResponse) -> json.Json {
     #("network", payment_network.to_json(network)),
     #("error_reason", case error_reason {
       None -> json.null()
-      Some(value) -> settle_invalid_reason_to_json(value)
+      Some(value) -> error_reason_to_json(value)
     }),
   ])
 }
