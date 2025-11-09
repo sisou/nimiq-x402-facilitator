@@ -1,5 +1,5 @@
-import app/types/payment_network.{type PaymentNetwork}
-import app/types/payment_scheme.{type PaymentScheme}
+import app/v1/types/payment_network.{type PaymentNetwork}
+import app/v1/types/payment_scheme.{type PaymentScheme}
 import gleam/json
 
 pub type PaymentKind {
