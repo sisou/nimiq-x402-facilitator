@@ -10,8 +10,14 @@ import gleam/http.{Post}
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import nimiq/account/account_type
 import nimiq/account/address.{type Address}
+import nimiq/bindings/ed25519
+import nimiq/key/public_key
+import nimiq/key/signature
+import nimiq/transaction/network_id
+import nimiq/transaction/signature_proof
 import nimiq/transaction/transaction.{type Transaction}
 import status_code
 import wisp.{type Request, type Response}
@@ -26,60 +32,88 @@ pub fn handle(req: Request) -> Response {
   // is too large.
   use json <- wisp.require_json(req)
 
+  {
+    use request <- validate_request_intrinsic(json)
+    use tx <- validate_transaction_intrinsic(request)
+    // TODO: Validate transaction on-chain
+    Ok(VerifyResponse(True, Some(tx.sender), None))
+  }
+  |> into_response()
+}
+
+fn validate_request_intrinsic(
+  json: dynamic.Dynamic,
+  next: fn(VerifyRequest) -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
   use request <- parse_request(json)
 
-  let result: Result(String, InvalidReason) = {
-    // TODO: Verify the request
-
-    use <- require_payment_x402_version(
-      request.payment_payload.x402_version,
-      constants.x402_version,
-    )
-
-    use <- require_payment_scheme(
-      request.payment_payload.scheme,
-      request.payment_requirements.scheme,
-    )
-
-    use <- require_payment_network(
-      request.payment_payload.network,
-      request.payment_requirements.network,
-    )
-
-    use tx <- parse_payment_transaction(
-      request.payment_payload.payload.transaction,
-    )
-
-    // Check transaction properties
-    use <- require_recipient(tx.recipient, request.payment_requirements.pay_to)
-    use <- require_recipient_type(tx.recipient_type, account_type.Basic)
-
-    // TODO: Check maxAmountRequired
-
-    // TODO: Check on-chain properties
-    // Transaction is currently valid (validity start height < 60 seconds ago)
-    // Transaction not yet known
-    // Sender account (type and balance)
-
-    Ok(tx.sender |> address.to_user_friendly_address())
-  }
-
-  // An appropriate response is returned depending on whether the JSON could be
-  // successfully handled or not.
-  wisp.json_response(
-    case result {
-      Ok(payer) -> VerifyResponse(is_valid: True, payer:, invalid_reason: None)
-      Error(invalid_reason) ->
-        VerifyResponse(
-          is_valid: False,
-          payer: "",
-          invalid_reason: Some(invalid_reason),
-        )
-    }
-      |> response_to_json()
-      |> json.to_string(),
-    status_code.ok,
+  use <- require_payment_x402_version(
+    request.payment_payload.x402_version,
+    constants.x402_version,
   )
+
+  use <- require_payment_scheme(
+    request.payment_payload.scheme,
+    request.payment_requirements.scheme,
+  )
+
+  use <- require_payment_network(
+    request.payment_payload.network,
+    request.payment_requirements.network,
+  )
+
+  next(request)
+}
+
+fn validate_transaction_intrinsic(
+  request: VerifyRequest,
+  next: fn(Transaction) -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  use tx <- parse_payment_transaction(
+    request.payment_payload.payload.transaction,
+  )
+
+  use <- require_valid_signature(tx)
+
+  use <- require_recipient(tx, request.payment_requirements.pay_to)
+
+  use <- require_recipient_type(tx, account_type.Basic)
+
+  use <- require_network(tx, payment_network.NimiqTestnet)
+
+  next(tx)
+}
+
+fn into_response(res: Result(VerifyResponse, ErrorResponse)) -> Response {
+  case res {
+    Ok(ok_response) ->
+      wisp.json_response(
+        ok_response
+          |> response_to_json()
+          |> json.to_string(),
+        status_code.ok,
+      )
+    Error(error_response) ->
+      case error_response {
+        Bad(error_type, error_message) ->
+          wisp.json_response(
+            bad_request_to_json(BadRequest(error_type, error_message))
+              |> json.to_string(),
+            status_code.bad_request,
+          )
+        Invalid(invalid_reason, payer) ->
+          wisp.json_response(
+            VerifyResponse(
+              is_valid: False,
+              payer:,
+              invalid_reason: Some(invalid_reason),
+            )
+              |> response_to_json()
+              |> json.to_string(),
+            status_code.ok,
+          )
+      }
+  }
 }
 
 type BadRequestType {
@@ -122,41 +156,30 @@ fn bad_request_to_json(bad_request: BadRequest) -> json.Json {
 
 fn parse_request(
   json: dynamic.Dynamic,
-  next: fn(VerifyRequest) -> Response,
-) -> Response {
+  next: fn(VerifyRequest) -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
   case decode.run(json, request_decoder()) {
     Ok(req) ->
       case req.x402_version {
         version if version == constants.x402_version -> next(req)
-        _ ->
-          wisp.json_response(
-            BadRequest(InvalidRequest, "Invalid x402Version.")
-              |> bad_request_to_json()
-              |> json.to_string(),
-            status_code.bad_request,
-          )
+        _ -> Error(Bad(InvalidRequest, "Invalid x402Version."))
       }
     Error(errors) ->
-      wisp.json_response(
-        BadRequest(
-          InvalidRequest,
-          errors
-            |> list.map(fn(error) {
-              "Expected "
-              <> error.expected
-              <> ", found "
-              <> error.found
-              <> " ("
-              <> error.path
-              |> list.fold("", fn(acc, path) { acc <> "/" <> path })
-              <> ")."
-            })
-            |> list.fold("Invalid request. ", fn(acc, msg) { acc <> msg <> " " }),
-        )
-          |> bad_request_to_json()
-          |> json.to_string(),
-        status_code.bad_request,
-      )
+      Error(Bad(
+        InvalidRequest,
+        errors
+          |> list.map(fn(error) {
+            "Expected "
+            <> error.expected
+            <> ", found "
+            <> error.found
+            <> " ("
+            <> error.path
+            |> list.fold("", fn(acc, path) { acc <> "/" <> path })
+            <> ")."
+          })
+          |> list.fold("Invalid request. ", fn(acc, msg) { acc <> msg <> " " }),
+      ))
   }
 }
 
@@ -205,75 +228,121 @@ fn invalid_reason_to_json(invalid_reason: InvalidReason) -> json.Json {
   }
 }
 
+type ErrorResponse {
+  Bad(BadRequestType, message: String)
+  Invalid(InvalidReason, payer: Option(Address))
+}
+
 fn require_payment_x402_version(
   version: Int,
   required_version: Int,
-  next: fn() -> Result(String, InvalidReason),
-) -> Result(String, InvalidReason) {
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
   case version {
     version if version == required_version -> next()
-    _ -> Error(InvalidX402Version)
+    _ -> Error(Invalid(InvalidX402Version, None))
   }
 }
 
 fn require_payment_scheme(
   scheme: PaymentScheme,
   required_scheme: PaymentScheme,
-  next: fn() -> Result(String, InvalidReason),
-) -> Result(String, InvalidReason) {
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
   case scheme {
     scheme if scheme == required_scheme -> next()
-    _ -> Error(InvalidScheme)
+    _ -> Error(Invalid(InvalidScheme, None))
   }
 }
 
 fn require_payment_network(
   network: PaymentNetwork,
   required_network: PaymentNetwork,
-  next: fn() -> Result(String, InvalidReason),
-) -> Result(String, InvalidReason) {
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
   case network {
     network if network == required_network -> next()
-    _ -> Error(InvalidNetwork)
+    _ -> Error(Invalid(InvalidNetwork, None))
   }
 }
 
 fn parse_payment_transaction(
   tx: String,
-  next: fn(Transaction) -> Result(String, InvalidReason),
-) -> Result(String, InvalidReason) {
+  next: fn(Transaction) -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
   case transaction.from_hex(tx) {
     Ok(tx) -> next(tx)
-    _ -> Error(InvalidPayload)
+    Error(error) ->
+      Error(Bad(MalformedTransaction, "Malformed transaction: " <> error))
+  }
+}
+
+fn require_valid_signature(
+  tx: Transaction,
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  use proof <- result.try(
+    tx.proof
+    |> signature_proof.deserialize_all()
+    |> result.map_error(fn(error) {
+      Bad(MalformedTransaction, "Malformed signature proof: " <> error)
+    }),
+  )
+
+  case
+    ed25519.valid_signature(
+      tx |> transaction.serialize_content(),
+      proof.signature |> signature.serialize_to_bits(),
+      proof.public_key |> public_key.serialize_to_bits(),
+    )
+  {
+    True -> next()
+    False -> Error(Bad(InvalidSignature, "Invalid transaction signature."))
   }
 }
 
 fn require_recipient(
-  recipient: Address,
+  tx: Transaction,
   required_recipient: Address,
-  next: fn() -> Result(String, InvalidReason),
-) -> Result(String, InvalidReason) {
-  case recipient {
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  case tx.recipient {
     recipient if recipient == required_recipient -> next()
-    _ -> Error(InvalidPayload)
+    _ -> Error(Invalid(InvalidPayload, Some(tx.sender)))
   }
 }
 
 fn require_recipient_type(
-  recipient_type: account_type.AccountType,
+  tx: Transaction,
   required_type: account_type.AccountType,
-  next: fn() -> Result(String, InvalidReason),
-) -> Result(String, InvalidReason) {
-  case recipient_type {
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  case tx.recipient_type {
     recipient_type if recipient_type == required_type -> next()
-    _ -> Error(InvalidPayload)
+    _ -> Error(Invalid(InvalidPayload, Some(tx.sender)))
+  }
+}
+
+fn require_network(
+  tx: Transaction,
+  required_network: PaymentNetwork,
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  let required_network_id = case required_network {
+    payment_network.Nimiq -> network_id.MainAlbatross
+    payment_network.NimiqTestnet -> network_id.TestAlbatross
+  }
+
+  case tx.network_id {
+    network if network == required_network_id -> next()
+    _ -> Error(Invalid(InvalidPayload, Some(tx.sender)))
   }
 }
 
 type VerifyResponse {
   VerifyResponse(
     is_valid: Bool,
-    payer: String,
+    payer: Option(Address),
     invalid_reason: Option(InvalidReason),
   )
 }
@@ -282,7 +351,13 @@ fn response_to_json(response: VerifyResponse) -> json.Json {
   let VerifyResponse(is_valid:, payer:, invalid_reason:) = response
   json.object([
     #("isValid", json.bool(is_valid)),
-    #("payer", json.string(payer)),
+    #(
+      "payer",
+      json.string(case payer {
+        Some(address) -> address |> address.to_user_friendly_address()
+        None -> ""
+      }),
+    ),
     #("invalidReason", case invalid_reason {
       None -> json.null()
       Some(value) -> invalid_reason_to_json(value)
