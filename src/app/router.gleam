@@ -1,12 +1,7 @@
-import app/v1/types/payment_kind
-import app/v1/types/payment_network
-import app/v1/types/payment_scheme
+import app/v1/supported
 import app/v1/verify
 import app/web
 import gleam/http.{Get}
-import gleam/json
-import gleam/list
-import status_code
 import wisp.{type Request, type Response}
 
 pub fn handle_request(req: Request) -> Response {
@@ -20,7 +15,7 @@ pub fn handle_request(req: Request) -> Response {
     // This matches `/`.
     [] -> home_page(req)
 
-    ["v1", "supported"] -> supported(req)
+    ["v1", "supported"] -> supported.handle(req)
     ["v1", "verify"] -> verify.handle(req)
 
     // This matches all other paths.
@@ -35,23 +30,4 @@ fn home_page(req: Request) -> Response {
 
   wisp.ok()
   |> wisp.html_body("Nimiq x402 Facilitator")
-}
-
-fn supported(req: Request) -> Response {
-  use <- wisp.require_method(req, Get)
-
-  let kinds = [
-    payment_kind.PaymentKind(
-      x402_version: 1,
-      scheme: payment_scheme.Exact,
-      // TODO: Make network configurable
-      network: payment_network.NimiqTestnet,
-    ),
-  ]
-
-  kinds
-  |> list.map(payment_kind.to_json)
-  |> json.preprocessed_array()
-  |> json.to_string()
-  |> wisp.json_response(status_code.ok)
 }
