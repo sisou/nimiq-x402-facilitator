@@ -16,7 +16,8 @@ pub fn main() {
   let assert Ok(_) =
     wisp_mist.handler(handler, secret_key_base)
     |> mist.new
-    |> mist.port(8000)
+    |> mist.bind(config.host)
+    |> mist.port(config.port)
     |> mist.start
 
   process.sleep_forever()
