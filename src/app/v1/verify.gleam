@@ -45,9 +45,14 @@ fn validate_request_intrinsic(
 ) -> Result(VerifyResponse, ErrorResponse) {
   use request <- parse_request(json)
 
+  use <- require_request_x402_version(
+    request.x402_version,
+    constants.x402_version,
+  )
+
   use <- require_payment_x402_version(
     request.payment_payload.x402_version,
-    constants.x402_version,
+    request.x402_version,
   )
 
   use <- require_payment_scheme(
@@ -229,6 +234,17 @@ fn invalid_reason_to_json(invalid_reason: InvalidReason) -> json.Json {
 type ErrorResponse {
   Bad(BadRequestType, message: String)
   Invalid(InvalidReason, payer: Option(Address))
+}
+
+fn require_request_x402_version(
+  version: Int,
+  required_version: Int,
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  case version {
+    version if version == required_version -> next()
+    _ -> Error(Bad(InvalidRequest, "Invalid root x402Version"))
+  }
 }
 
 fn require_payment_x402_version(
