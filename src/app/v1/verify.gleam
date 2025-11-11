@@ -12,9 +12,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import nimiq/account/account_type
-import nimiq/account/address.{type Address}
-import nimiq/bindings/ed25519
-import nimiq/key/public_key
+import nimiq/address.{type Address}
 import nimiq/key/signature
 import nimiq/transaction/network_id
 import nimiq/transaction/signature_proof
@@ -290,11 +288,8 @@ fn require_valid_signature(
   )
 
   case
-    ed25519.valid_signature(
-      tx |> transaction.serialize_content(),
-      proof.signature |> signature.serialize_to_bits(),
-      proof.public_key |> public_key.serialize_to_bits(),
-    )
+    proof.signature
+    |> signature.verify(proof.public_key, tx |> transaction.serialize_content())
   {
     True -> next()
     False -> Error(Bad(InvalidSignature, "Invalid transaction signature."))

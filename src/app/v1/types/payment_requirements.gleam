@@ -5,7 +5,7 @@ import gleam/dynamic/decode
 import gleam/int
 import gleam/option.{type Option, None}
 import gleam/result
-import nimiq/account/address.{type Address}
+import nimiq/address.{type Address}
 
 pub type PaymentRequirements {
   PaymentRequirements(
