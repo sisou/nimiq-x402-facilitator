@@ -6,6 +6,10 @@ A Facilitator for the x402 payment protocol for the Nimiq blockchain.
 
 The app is configured with environment variables. See the `.env.sample` file for the available settings.
 
+## Deployment
+
+A Dockerfile is included in this repo that builds and runs the app.
+
 ## Development
 
 ```sh
