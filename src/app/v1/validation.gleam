@@ -1,3 +1,4 @@
+import app/config.{type Config}
 import app/rpc
 import app/v1/constants
 import app/v1/types/bad_request.{type BadRequestType}
@@ -30,6 +31,7 @@ pub type ErrorResponse {
 
 pub fn validate_request_intrinsic(
   json: dynamic.Dynamic,
+  config: Config,
   next: fn(VerifyRequest) -> Result(VerifyResponse, ErrorResponse),
 ) -> Result(VerifyResponse, ErrorResponse) {
   use request <- parse_request(json)
@@ -49,6 +51,11 @@ pub fn validate_request_intrinsic(
     request.payment_requirements.scheme,
   )
 
+  use <- require_supported_network(
+    request.payment_requirements.network,
+    config.network,
+  )
+
   use <- require_payment_network(
     request.payment_payload.network,
     request.payment_requirements.network,
@@ -59,6 +66,7 @@ pub fn validate_request_intrinsic(
 
 pub fn validate_transaction_intrinsic(
   request: VerifyRequest,
+  config: Config,
   next: fn(Transaction) -> Result(VerifyResponse, ErrorResponse),
 ) -> Result(VerifyResponse, ErrorResponse) {
   use tx <- parse_payment_transaction(
@@ -71,17 +79,18 @@ pub fn validate_transaction_intrinsic(
 
   use <- require_recipient_account_type(tx, account_type.Basic)
 
-  use <- require_network(tx, payment_network.NimiqTestnet)
+  use <- require_network(tx, config.network)
 
   next(tx)
 }
 
 pub fn validate_transaction_onchain(
   tx: Transaction,
+  config: Config,
   next: fn() -> Result(VerifyResponse, ErrorResponse),
 ) -> Result(VerifyResponse, ErrorResponse) {
   // Transaction is currently valid (validity start height < 60 seconds ago)
-  let current_height = rpc.get_block_number()
+  let current_height = rpc.get_block_number(config)
   use <- require_validity_window(tx.validity_start_height, current_height)
 
   // Transaction not yet known
@@ -90,12 +99,15 @@ pub fn validate_transaction_onchain(
     |> transaction.serialize_content()
     |> blake2b.hash()
     |> bit_array.base16_encode()
-  let existing_tx = rpc.get_transaction_by_hash(tx_hash)
+  let existing_tx = rpc.get_transaction_by_hash(tx_hash, config)
   use <- require_transaction_unknown(tx_hash, existing_tx)
 
   // Sender account (type and balance)
   let sender_account =
-    rpc.get_account_by_address(tx.sender |> address.to_user_friendly_address())
+    rpc.get_account_by_address(
+      tx.sender |> address.to_user_friendly_address(),
+      config,
+    )
   use <- require_sender_account_type(sender_account, tx.sender_type)
   use <- require_sender_balance(sender_account, tx.value.luna + tx.fee.luna)
 
@@ -186,6 +198,17 @@ fn require_payment_scheme(
   case scheme {
     scheme if scheme == required_scheme -> next()
     _ -> Error(Invalid(invalid_reason.InvalidScheme, None))
+  }
+}
+
+fn require_supported_network(
+  network: PaymentNetwork,
+  required_network: PaymentNetwork,
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  case network {
+    network if network == required_network -> next()
+    _ -> Error(Bad(bad_request.InvalidRequest, "Unsupported required network."))
   }
 }
 

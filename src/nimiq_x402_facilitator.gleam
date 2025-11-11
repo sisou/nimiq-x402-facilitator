@@ -1,3 +1,4 @@
+import app/config
 import app/router
 import gleam/erlang/process
 import mist
@@ -9,8 +10,11 @@ pub fn main() {
   wisp.set_logger_level(wisp.DebugLevel)
   let secret_key_base = wisp.random_string(64)
 
+  let config = config.load()
+  let handler = router.handle_request(_, config)
+
   let assert Ok(_) =
-    wisp_mist.handler(router.handle_request, secret_key_base)
+    wisp_mist.handler(handler, secret_key_base)
     |> mist.new
     |> mist.port(8000)
     |> mist.start

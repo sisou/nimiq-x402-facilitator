@@ -1,19 +1,20 @@
+import app/config.{type Config}
+import gleam/bit_array
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/http.{Post}
 import gleam/http/request
 import gleam/httpc
 import gleam/json
-import gleam/option.{type Option}
+import gleam/option.{type Option, Some}
 import gleam/result
-import gleam/uri
 import jsonrpcx
 import nimiq/account/account_type
 
-pub fn get_block_number() -> Int {
+pub fn get_block_number(config: Config) -> Int {
   let http_request =
     jsonrpcx.request(method: "getBlockNumber", id: jsonrpcx.id(42))
-    |> make_request()
+    |> make_request(config)
 
   let response: jsonrpcx.Response(NimiqRpcResult(Int)) =
     httpc.send(http_request)
@@ -97,11 +98,14 @@ fn rpc_transaction_decoder() -> decode.Decoder(RpcTransaction) {
   ))
 }
 
-pub fn get_transaction_by_hash(hash: String) -> Result(RpcTransaction, Nil) {
+pub fn get_transaction_by_hash(
+  hash: String,
+  config: Config,
+) -> Result(RpcTransaction, Nil) {
   let http_request =
     jsonrpcx.request(method: "getTransactionByHash", id: jsonrpcx.id(42))
     |> jsonrpcx.request_params([hash |> json.string])
-    |> make_request()
+    |> make_request(config)
 
   let response: jsonrpcx.Message =
     httpc.send(http_request)
@@ -142,11 +146,14 @@ fn rpc_account_decoder() -> decode.Decoder(RpcAccount) {
   decode.success(RpcAccount(address:, balance:, typ:))
 }
 
-pub fn get_account_by_address(address: String) -> Result(RpcAccount, Nil) {
+pub fn get_account_by_address(
+  address: String,
+  config: Config,
+) -> Result(RpcAccount, Nil) {
   let http_request =
     jsonrpcx.request(method: "getAccountByAddress", id: jsonrpcx.id(42))
     |> jsonrpcx.request_params([address |> json.string])
-    |> make_request()
+    |> make_request(config)
 
   let response: jsonrpcx.Message =
     httpc.send(http_request)
@@ -167,12 +174,25 @@ pub fn get_account_by_address(address: String) -> Result(RpcAccount, Nil) {
 
 fn make_request(
   payload: jsonrpcx.Request(List(json.Json)),
+  config: Config,
 ) -> request.Request(String) {
+  let assert Ok(http_request) = request.from_uri(config.rpc_url)
+
   let http_request =
-    request.from_uri(uri.parse("") |> unwrap())
-    |> unwrap()
+    http_request
     |> request.set_method(Post)
     |> request.set_header("content-type", "application/json")
+
+  let http_request = case config.rpc_username, config.rpc_password {
+    Some(username), Some(password) -> {
+      let credentials = username <> ":" <> password
+      let encoded_credentials =
+        credentials |> bit_array.from_string() |> bit_array.base64_encode(True)
+      http_request
+      |> request.set_header("authorization", "Basic " <> encoded_credentials)
+    }
+    _, _ -> http_request
+  }
 
   payload
   |> jsonrpcx.request_to_json(json.preprocessed_array)

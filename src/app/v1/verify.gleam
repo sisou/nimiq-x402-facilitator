@@ -1,3 +1,4 @@
+import app/config.{type Config}
 import app/v1/types/bad_request.{BadRequest}
 import app/v1/types/verify_response.{type VerifyResponse, VerifyResponse}
 import app/v1/validation.{type ErrorResponse, Bad, Invalid}
@@ -8,7 +9,7 @@ import gleam/option.{None, Some}
 import status_code
 import wisp.{type Request, type Response}
 
-pub fn handle(req: Request) -> Response {
+pub fn handle(req: Request, config: Config) -> Response {
   use req <- web.middleware(req)
   use <- wisp.require_method(req, Post)
 
@@ -19,9 +20,9 @@ pub fn handle(req: Request) -> Response {
   use json <- wisp.require_json(req)
 
   {
-    use request <- validation.validate_request_intrinsic(json)
-    use tx <- validation.validate_transaction_intrinsic(request)
-    use <- validation.validate_transaction_onchain(tx)
+    use request <- validation.validate_request_intrinsic(json, config)
+    use tx <- validation.validate_transaction_intrinsic(request, config)
+    use <- validation.validate_transaction_onchain(tx, config)
     Ok(VerifyResponse(True, Some(tx.sender), None))
   }
   |> into_response()
