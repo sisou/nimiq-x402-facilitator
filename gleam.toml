@@ -22,6 +22,9 @@ gleam_json = ">= 3.1.0 and < 4.0.0"
 status_code = ">= 1.1.0 and < 2.0.0"
 nimiq_gleam = ">= 0.5.0 and < 1.0.0"
 nimiq_address = ">= 1.0.0 and < 2.0.0"
+nimiq_blake2b = ">= 1.0.0 and < 2.0.0"
+jsonrpcx = ">= 1.0.2 and < 2.0.0"
+gleam_httpc = ">= 5.0.0 and < 6.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

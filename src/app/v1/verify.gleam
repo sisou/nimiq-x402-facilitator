@@ -1,18 +1,22 @@
+import app/rpc
 import app/v1/constants
 import app/v1/types/payment_network.{type PaymentNetwork}
 import app/v1/types/payment_payload.{type PaymentPayload}
 import app/v1/types/payment_requirements.{type PaymentRequirements}
 import app/v1/types/payment_scheme.{type PaymentScheme}
 import app/web
+import gleam/bit_array
 import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/http.{Post}
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import nimiq/account/account_type
 import nimiq/address.{type Address}
+import nimiq/blake2b
 import nimiq/key/signature
 import nimiq/transaction/network_id
 import nimiq/transaction/signature_proof
@@ -33,7 +37,7 @@ pub fn handle(req: Request) -> Response {
   {
     use request <- validate_request_intrinsic(json)
     use tx <- validate_transaction_intrinsic(request)
-    // TODO: Validate transaction on-chain
+    use <- validate_transaction_onchain(tx)
     Ok(VerifyResponse(True, Some(tx.sender), None))
   }
   |> into_response()
@@ -85,6 +89,32 @@ fn validate_transaction_intrinsic(
   use <- require_network(tx, payment_network.NimiqTestnet)
 
   next(tx)
+}
+
+fn validate_transaction_onchain(
+  tx: Transaction,
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  // Transaction is currently valid (validity start height < 60 seconds ago)
+  let current_height = rpc.get_block_number()
+  use <- require_validity_window(tx.validity_start_height, current_height)
+
+  // Transaction not yet known
+  let tx_hash =
+    tx
+    |> transaction.serialize_content()
+    |> blake2b.hash()
+    |> bit_array.base16_encode()
+  let existing_tx = rpc.get_transaction_by_hash(tx_hash)
+  use <- require_transaction_unknown(tx_hash, existing_tx)
+
+  // Sender account (type and balance)
+  let sender_account =
+    rpc.get_account_by_address(tx.sender |> address.to_user_friendly_address())
+  use <- require_sender_account_type(sender_account, tx.sender_type)
+  use <- require_sender_balance(sender_account, tx.value.luna + tx.fee.luna)
+
+  next()
 }
 
 fn into_response(res: Result(VerifyResponse, ErrorResponse)) -> Response {
@@ -387,6 +417,96 @@ fn require_network(
         },
       )
       Error(Invalid(InvalidPayload, Some(tx.sender)))
+    }
+  }
+}
+
+fn require_validity_window(
+  validity_start_height: Int,
+  current_height: Int,
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  // The validity window starts 2 hours into the past
+  let window_start = current_height - 2 * 60 * 60
+  // Add 60 blocks (1 minute) to ensure the transaction doesn't expire in the next minute
+  let window_start = window_start + 60
+
+  case validity_start_height {
+    height if height >= window_start && height <= current_height + 1 -> next()
+    _ -> {
+      wisp.log_debug(
+        "Validity window invalid: expected between "
+        <> window_start |> int.to_string()
+        <> " and "
+        <> current_height + 1 |> int.to_string()
+        <> ", found "
+        <> validity_start_height |> int.to_string(),
+      )
+      Error(Invalid(InvalidPayload, None))
+    }
+  }
+}
+
+fn require_transaction_unknown(
+  hash: String,
+  existing_tx: Result(rpc.RpcTransaction, Nil),
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) {
+  case existing_tx {
+    Error(Nil) -> next()
+    Ok(_) ->
+      Error(Bad(
+        AlreadyExists,
+        "Transaction with hash " <> hash <> " already exists.",
+      ))
+  }
+}
+
+fn require_sender_account_type(
+  sender_account: Result(rpc.RpcAccount, Nil),
+  required_type: account_type.AccountType,
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  case sender_account {
+    Error(Nil) -> Error(Invalid(InsufficientFunds, None))
+    Ok(account) ->
+      case account.typ {
+        typ if typ == required_type -> next()
+        _ -> {
+          wisp.log_debug(
+            "Sender account type mismatch: expected "
+            <> case required_type {
+              account_type.Basic -> "Basic"
+              account_type.Vesting -> "Vesting"
+              account_type.Htlc -> "HTLC"
+              account_type.Staking -> "Staking"
+            }
+            <> ", found "
+            <> case account.typ {
+              account_type.Basic -> "Basic"
+              account_type.Vesting -> "Vesting"
+              account_type.Htlc -> "HTLC"
+              account_type.Staking -> "Staking"
+            },
+          )
+          Error(Invalid(InvalidPayload, None))
+        }
+      }
+  }
+}
+
+fn require_sender_balance(
+  sender_account: Result(rpc.RpcAccount, Nil),
+  required_balance: Int,
+  next: fn() -> Result(VerifyResponse, ErrorResponse),
+) -> Result(VerifyResponse, ErrorResponse) {
+  case sender_account {
+    Error(Nil) -> Error(Invalid(InsufficientFunds, None))
+    Ok(account) -> {
+      case account.balance {
+        balance if balance >= required_balance -> next()
+        _ -> Error(Invalid(InsufficientFunds, None))
+      }
     }
   }
 }
