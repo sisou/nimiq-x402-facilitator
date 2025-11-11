@@ -80,7 +80,7 @@ fn validate_transaction_intrinsic(
 
   use <- require_recipient(tx, request.payment_requirements.pay_to)
 
-  use <- require_recipient_type(tx, account_type.Basic)
+  use <- require_recipient_account_type(tx, account_type.Basic)
 
   use <- require_network(tx, payment_network.NimiqTestnet)
 
@@ -319,18 +319,44 @@ fn require_recipient(
 ) -> Result(VerifyResponse, ErrorResponse) {
   case tx.recipient {
     recipient if recipient == required_recipient -> next()
-    _ -> Error(Invalid(InvalidPayload, Some(tx.sender)))
+    _ -> {
+      wisp.log_debug(
+        "Recipient mismatch: expected "
+        <> required_recipient |> address.to_user_friendly_address()
+        <> ", found "
+        <> tx.recipient |> address.to_user_friendly_address(),
+      )
+      Error(Invalid(InvalidPayload, Some(tx.sender)))
+    }
   }
 }
 
-fn require_recipient_type(
+fn require_recipient_account_type(
   tx: Transaction,
   required_type: account_type.AccountType,
   next: fn() -> Result(VerifyResponse, ErrorResponse),
 ) -> Result(VerifyResponse, ErrorResponse) {
   case tx.recipient_type {
     recipient_type if recipient_type == required_type -> next()
-    _ -> Error(Invalid(InvalidPayload, Some(tx.sender)))
+    _ -> {
+      wisp.log_debug(
+        "Recipient account type mismatch: expected "
+        <> case required_type {
+          account_type.Basic -> "Basic"
+          account_type.Vesting -> "Vesting"
+          account_type.Htlc -> "HTLC"
+          account_type.Staking -> "Staking"
+        }
+        <> ", found "
+        <> case tx.recipient_type {
+          account_type.Basic -> "Basic"
+          account_type.Vesting -> "Vesting"
+          account_type.Htlc -> "HTLC"
+          account_type.Staking -> "Staking"
+        },
+      )
+      Error(Invalid(InvalidPayload, Some(tx.sender)))
+    }
   }
 }
 
@@ -346,7 +372,22 @@ fn require_network(
 
   case tx.network_id {
     network if network == required_network_id -> next()
-    _ -> Error(Invalid(InvalidPayload, Some(tx.sender)))
+    _ -> {
+      wisp.log_debug(
+        "Network mismatch: expected "
+        <> case required_network {
+          payment_network.Nimiq -> "Nimiq Mainnet"
+          payment_network.NimiqTestnet -> "Nimiq Testnet"
+        }
+        <> ", found "
+        <> case tx.network_id {
+          network_id.MainAlbatross -> "Nimiq Mainnet"
+          network_id.TestAlbatross -> "Nimiq Testnet"
+          _ -> "Unknown Network"
+        },
+      )
+      Error(Invalid(InvalidPayload, Some(tx.sender)))
+    }
   }
 }
 
