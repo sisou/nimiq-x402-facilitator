@@ -1,6 +1,6 @@
 import app/config.{type Config}
 import app/v1/types/bad_request.{BadRequest}
-import app/v1/types/verify_response.{type VerifyResponse, VerifyResponse}
+import app/v1/types/settle_response.{type SettleResponse, SettleResponse}
 import app/v1/validation.{type ErrorResponse, Bad, Invalid}
 import app/web
 import gleam/http.{Post}
@@ -22,22 +22,24 @@ pub fn handle(req: Request, config: Config) -> Response {
   {
     use request <- validation.validate_request_intrinsic(json, config)
     use tx <- validation.validate_transaction_intrinsic(request, config)
-    use <- validation.validate_transaction_onchain(tx, config)
-    Ok(VerifyResponse(
-      is_valid: True,
+    use hash <- validation.require_broadcast_transaction(tx, config)
+    Ok(SettleResponse(
+      success: True,
       payer: Some(tx.sender),
-      invalid_reason: None,
+      transaction: Some(hash),
+      network: Some(request.payment_payload.network),
+      error_reason: None,
     ))
   }
   |> into_response()
 }
 
-fn into_response(res: Result(VerifyResponse, ErrorResponse)) -> Response {
+fn into_response(res: Result(SettleResponse, ErrorResponse)) -> Response {
   case res {
     Ok(ok_response) ->
       wisp.json_response(
         ok_response
-          |> verify_response.to_json()
+          |> settle_response.to_json()
           |> json.to_string(),
         status_code.ok,
       )
@@ -49,14 +51,16 @@ fn into_response(res: Result(VerifyResponse, ErrorResponse)) -> Response {
               |> json.to_string(),
             status_code.bad_request,
           )
-        Invalid(invalid_reason, payer) ->
+        Invalid(error_reason, payer) ->
           wisp.json_response(
-            VerifyResponse(
-              is_valid: False,
+            SettleResponse(
+              success: False,
               payer:,
-              invalid_reason: Some(invalid_reason),
+              transaction: None,
+              network: None,
+              error_reason: Some(error_reason),
             )
-              |> verify_response.to_json()
+              |> settle_response.to_json()
               |> json.to_string(),
             status_code.ok,
           )

@@ -1,4 +1,5 @@
 import app/config.{type Config}
+import app/v1/settle
 import app/v1/supported
 import app/v1/verify
 import app/web
@@ -18,6 +19,7 @@ pub fn handle_request(req: Request, config: Config) -> Response {
 
     ["v1", "supported"] -> supported.handle(req, config)
     ["v1", "verify"] -> verify.handle(req, config)
+    ["v1", "settle"] -> settle.handle(req, config)
 
     // This matches all other paths.
     _ -> wisp.not_found()

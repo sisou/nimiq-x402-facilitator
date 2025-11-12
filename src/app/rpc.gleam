@@ -5,8 +5,9 @@ import gleam/dynamic/decode
 import gleam/http.{Post}
 import gleam/http/request
 import gleam/httpc
+import gleam/int
 import gleam/json
-import gleam/option.{type Option, Some}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import jsonrpcx
 import nimiq/account/account_type
@@ -16,7 +17,7 @@ pub fn get_block_number(config: Config) -> Int {
     jsonrpcx.request(method: "getBlockNumber", id: jsonrpcx.id(42))
     |> make_request(config)
 
-  let response: jsonrpcx.Response(NimiqRpcResult(Int)) =
+  let response: jsonrpcx.Response(RpcResult(Int)) =
     httpc.send(http_request)
     |> unwrap()
     |> fn(resp) { resp.body }
@@ -172,6 +173,46 @@ pub fn get_account_by_address(
   }
 }
 
+pub fn push_transaction(
+  transaction: String,
+  config: Config,
+) -> Result(String, String) {
+  let http_request =
+    jsonrpcx.request(method: "pushTransaction", id: jsonrpcx.id(42))
+    |> jsonrpcx.request_params([transaction |> json.string()])
+    |> make_request(config)
+
+  let response: jsonrpcx.Message =
+    httpc.send(http_request)
+    |> unwrap()
+    |> fn(resp) { resp.body }
+    |> json.parse(jsonrpcx.message_decoder())
+    |> unwrap()
+
+  case response {
+    jsonrpcx.ResponseMessage(jsonrpcx.Response(result:, ..)) ->
+      result
+      |> decode.run(nimiq_rpc_result_decoder(decode.string))
+      |> result.map(fn(result) { result.data })
+      |> result.replace_error("Failed to decode RPC result")
+    jsonrpcx.ErrorResponseMessage(jsonrpcx.ErrorResponse(
+      error: jsonrpcx.ErrorBody(code:, message:, data:),
+      ..,
+    )) -> {
+      let data = case data {
+        Some(data) ->
+          case decode.run(data, decode.string) {
+            Ok(msg) -> ": " <> msg
+            Error(_) -> ""
+          }
+        None -> ""
+      }
+      Error("RPC Error " <> int.to_string(code) <> ": " <> message <> data)
+    }
+    _ -> Error("Invalid RPC response")
+  }
+}
+
 fn make_request(
   payload: jsonrpcx.Request(List(json.Json)),
   config: Config,
@@ -200,16 +241,16 @@ fn make_request(
   |> request.set_body(http_request, _)
 }
 
-type NimiqRpcResult(result) {
-  NimiqRpcResult(data: result, metadata: Option(dynamic.Dynamic))
+type RpcResult(result) {
+  RpcResult(data: result, metadata: Option(dynamic.Dynamic))
 }
 
 fn nimiq_rpc_result_decoder(
   data_decoder: decode.Decoder(a),
-) -> decode.Decoder(NimiqRpcResult(a)) {
+) -> decode.Decoder(RpcResult(a)) {
   use data <- decode.field("data", data_decoder)
   use metadata <- decode.field("metadata", decode.optional(decode.dynamic))
-  decode.success(NimiqRpcResult(data:, metadata:))
+  decode.success(RpcResult(data:, metadata:))
 }
 
 fn unwrap(res: Result(a, b)) -> a {

@@ -7,7 +7,6 @@ import app/v1/types/payment_network.{type PaymentNetwork}
 import app/v1/types/payment_payload.{type PaymentPayload}
 import app/v1/types/payment_requirements.{type PaymentRequirements}
 import app/v1/types/payment_scheme.{type PaymentScheme}
-import app/v1/types/verify_response.{type VerifyResponse}
 import gleam/bit_array
 import gleam/dynamic
 import gleam/dynamic/decode
@@ -32,8 +31,8 @@ pub type ErrorResponse {
 pub fn validate_request_intrinsic(
   json: dynamic.Dynamic,
   config: Config,
-  next: fn(VerifyRequest) -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn(VerifyRequest) -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   use request <- parse_request(json)
 
   use <- require_request_x402_version(
@@ -67,8 +66,8 @@ pub fn validate_request_intrinsic(
 pub fn validate_transaction_intrinsic(
   request: VerifyRequest,
   config: Config,
-  next: fn(Transaction) -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn(Transaction) -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   use tx <- parse_payment_transaction(
     request.payment_payload.payload.transaction,
   )
@@ -87,8 +86,8 @@ pub fn validate_transaction_intrinsic(
 pub fn validate_transaction_onchain(
   tx: Transaction,
   config: Config,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   // Transaction is currently valid (validity start height < 60 seconds ago)
   let current_height = rpc.get_block_number(config)
   use <- require_validity_window(tx.validity_start_height, current_height)
@@ -114,10 +113,25 @@ pub fn validate_transaction_onchain(
   next()
 }
 
+pub fn require_broadcast_transaction(
+  tx: Transaction,
+  config: Config,
+  next: fn(String) -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
+  let assert Ok(tx_hex) = tx |> transaction.to_hex()
+  case rpc.push_transaction(tx_hex, config) {
+    Ok(hash) -> next(hash)
+    Error(error) -> {
+      wisp.log_debug("Could not broadcast transaction: " <> error)
+      Error(Invalid(invalid_reason.InvalidPayload, Some(tx.sender)))
+    }
+  }
+}
+
 fn parse_request(
   json: dynamic.Dynamic,
-  next: fn(VerifyRequest) -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn(VerifyRequest) -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case decode.run(json, request_decoder()) {
     Ok(req) ->
       case req.x402_version {
@@ -171,8 +185,8 @@ fn request_decoder() -> decode.Decoder(VerifyRequest) {
 fn require_request_x402_version(
   version: Int,
   required_version: Int,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case version {
     version if version == required_version -> next()
     _ -> Error(Bad(bad_request.InvalidRequest, "Invalid root x402Version"))
@@ -182,8 +196,8 @@ fn require_request_x402_version(
 fn require_payment_x402_version(
   version: Int,
   required_version: Int,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case version {
     version if version == required_version -> next()
     _ -> Error(Invalid(invalid_reason.InvalidX402Version, None))
@@ -193,8 +207,8 @@ fn require_payment_x402_version(
 fn require_payment_scheme(
   scheme: PaymentScheme,
   required_scheme: PaymentScheme,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case scheme {
     scheme if scheme == required_scheme -> next()
     _ -> Error(Invalid(invalid_reason.InvalidScheme, None))
@@ -204,8 +218,8 @@ fn require_payment_scheme(
 fn require_supported_network(
   network: PaymentNetwork,
   required_network: PaymentNetwork,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case network {
     network if network == required_network -> next()
     _ -> Error(Bad(bad_request.InvalidRequest, "Unsupported required network."))
@@ -215,8 +229,8 @@ fn require_supported_network(
 fn require_payment_network(
   network: PaymentNetwork,
   required_network: PaymentNetwork,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case network {
     network if network == required_network -> next()
     _ -> Error(Invalid(invalid_reason.InvalidNetwork, None))
@@ -225,8 +239,8 @@ fn require_payment_network(
 
 fn parse_payment_transaction(
   tx: String,
-  next: fn(Transaction) -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn(Transaction) -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case transaction.from_hex(tx) {
     Ok(tx) -> next(tx)
     Error(error) ->
@@ -239,8 +253,8 @@ fn parse_payment_transaction(
 
 fn require_valid_signature(
   tx: Transaction,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   use proof <- result.try(
     tx.proof
     |> signature_proof.deserialize_all()
@@ -265,8 +279,8 @@ fn require_valid_signature(
 fn require_recipient(
   tx: Transaction,
   required_recipient: Address,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case tx.recipient {
     recipient if recipient == required_recipient -> next()
     _ -> {
@@ -284,8 +298,8 @@ fn require_recipient(
 fn require_recipient_account_type(
   tx: Transaction,
   required_type: account_type.AccountType,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case tx.recipient_type {
     recipient_type if recipient_type == required_type -> next()
     _ -> {
@@ -313,8 +327,8 @@ fn require_recipient_account_type(
 fn require_network(
   tx: Transaction,
   required_network: PaymentNetwork,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   let required_network_id = case required_network {
     payment_network.Nimiq -> network_id.MainAlbatross
     payment_network.NimiqTestnet -> network_id.TestAlbatross
@@ -344,8 +358,8 @@ fn require_network(
 fn require_validity_window(
   validity_start_height: Int,
   current_height: Int,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   // The validity window starts 2 hours into the past
   let window_start = current_height - 2 * 60 * 60
   // Add 60 blocks (1 minute) to ensure the transaction doesn't expire in the next minute
@@ -370,8 +384,8 @@ fn require_validity_window(
 fn require_transaction_unknown(
   hash: String,
   existing_tx: Result(rpc.RpcTransaction, Nil),
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case existing_tx {
     Error(Nil) -> next()
     Ok(_) ->
@@ -385,8 +399,8 @@ fn require_transaction_unknown(
 fn require_sender_account_type(
   sender_account: Result(rpc.RpcAccount, Nil),
   required_type: account_type.AccountType,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case sender_account {
     Error(Nil) -> Error(Invalid(invalid_reason.InsufficientFunds, None))
     Ok(account) ->
@@ -418,8 +432,8 @@ fn require_sender_account_type(
 fn require_sender_balance(
   sender_account: Result(rpc.RpcAccount, Nil),
   required_balance: Int,
-  next: fn() -> Result(VerifyResponse, ErrorResponse),
-) -> Result(VerifyResponse, ErrorResponse) {
+  next: fn() -> Result(a, ErrorResponse),
+) -> Result(a, ErrorResponse) {
   case sender_account {
     Error(Nil) -> Error(Invalid(invalid_reason.InsufficientFunds, None))
     Ok(account) -> {
