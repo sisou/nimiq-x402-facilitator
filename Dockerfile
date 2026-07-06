@@ -5,7 +5,7 @@ ARG GLEAM_VERSION=v1.17.0
 FROM ghcr.io/gleam-lang/gleam:${GLEAM_VERSION}-scratch AS gleam
 
 # Build stage
-FROM elixir:${ELIXIR_VERSION}-alpine AS build
+FROM elixir:${ELIXIR_VERSION} AS build
 RUN mix local.hex --force
 COPY --from=gleam /bin/gleam /bin/gleam
 COPY . /app/
