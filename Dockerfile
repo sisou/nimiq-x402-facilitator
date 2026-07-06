@@ -1,5 +1,5 @@
 ARG ELIXIR_VERSION=1.19-otp-28
-ARG GLEAM_VERSION=v1.14.0
+ARG GLEAM_VERSION=v1.17.0
 
 # Gleam stage
 FROM ghcr.io/gleam-lang/gleam:${GLEAM_VERSION}-scratch AS gleam
